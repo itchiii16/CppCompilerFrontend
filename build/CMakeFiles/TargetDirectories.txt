@@ -1,0 +1,5 @@
+C:/Users/Kathleen/Desktop/automata_main/build/CMakeFiles/MyQtApp.dir
+C:/Users/Kathleen/Desktop/automata_main/build/CMakeFiles/edit_cache.dir
+C:/Users/Kathleen/Desktop/automata_main/build/CMakeFiles/rebuild_cache.dir
+C:/Users/Kathleen/Desktop/automata_main/build/CMakeFiles/MyQtApp_autogen_timestamp_deps.dir
+C:/Users/Kathleen/Desktop/automata_main/build/CMakeFiles/MyQtApp_autogen.dir

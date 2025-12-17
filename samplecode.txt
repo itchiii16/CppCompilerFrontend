@@ -1,0 +1,29 @@
+//SIMPLE CODE
+x = 10
+y = x + 20 * 3
+result = (y - 5) / 2
+
+if result >= 10:
+    print(result)
+else:
+    result = result + 1
+
+//MEDIUM COMPLEX CODE
+a = 5
+b = (a + 3) * 2
+c = b - (a / 2) + 7
+total = ((a + b) * (c - 4)) / 2
+
+//COMPLEX CODE
+x = 10
+y = x + (5 * (2 + 3)) - 4
+z = ((y / 2) + 7) * (x - 1)
+if z >= 20:
+    result = z / (x - 5) + (y - 3)
+    print(result)
+else:
+    temp = (x + y) * (z - 10)
+    print(temp)
+
+# Nested parentheses and mixed operators
+final = ((x + y) * ((z - 2) / (result + 1))) - temp
