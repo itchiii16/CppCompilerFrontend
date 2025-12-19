@@ -9,6 +9,189 @@
 #include <QBrush>
 #include <QPen>
 #include <QPainterPath>
+#include <QMap>
+#include <QDebug>
+#include <QLabel>
+#include <QPainter>
+#include <QRectF>
+#include <QLineF>
+#include <QPolygonF>
+#include <QGraphicsLineItem>
+#include <QGraphicsPathItem>
+#include <QGraphicsPolygonItem>
+#include <QGraphicsTextItem>
+
+// ==========================
+//   Helper Functions
+// ==========================
+
+// A function that builds a simple symbol NFA for a character
+NFA buildSymbolNFA(QChar c)
+{
+    NFA nfa;
+    int s0 = nfa.getNextId();
+    int s1 = nfa.getNextId();
+    nfa.states.append({s0, false});
+    nfa.states.append({s1, true});
+    nfa.transitions.append({s0, QString(c), s1});
+    nfa.startState = s0;
+    nfa.acceptState = s1;
+    return nfa;
+}
+
+// Closure operation: nfa* (Kleene Star)
+NFA buildClosureNFA(const NFA& n)
+{
+    NFA result;
+    int nextId = 0;
+
+    result.states.append({nextId++, false});
+    result.states.append({nextId++, true});
+    int newStart = result.states[0].id;
+    int newAccept = result.states[1].id;
+
+    QMap<int, int> idMap;
+    for (const auto& s : n.states) {
+        idMap[s.id] = nextId++;
+        result.states.append({idMap[s.id], s.isAccept});
+    }
+
+    result.transitions.append({newStart, "ε", idMap[n.startState]});
+    result.transitions.append({newStart, "ε", newAccept});
+
+    for (const auto& s : n.states) {
+        if (s.isAccept) {
+            result.transitions.append({idMap[s.id], "ε", idMap[n.startState]});
+            result.transitions.append({idMap[s.id], "ε", newAccept});
+            for (auto& rs : result.states) {
+                if (rs.id == idMap[s.id]) rs.isAccept = false;
+            }
+        }
+    }
+
+    for (const auto& t : n.transitions) {
+        result.transitions.append({idMap[t.from], t.symbol, idMap[t.to]});
+    }
+
+    result.startState = newStart;
+    result.acceptState = newAccept;
+    return result;
+}
+
+// Concatenation operation: nfa1 + nfa2
+NFA buildConcatNFA(const NFA& n1, const NFA& n2)
+{
+    NFA result = n1;
+    int offset = n1.states.size();
+
+    for (const auto& s : n2.states) {
+        result.states.append({s.id + offset, s.isAccept});
+    }
+
+    for (auto& s : result.states) {
+        if (s.id == n1.acceptState) {
+            s.isAccept = false;
+        }
+    }
+
+    result.transitions.append({n1.acceptState, "ε", n2.startState + offset});
+
+    for (const auto& t : n2.transitions) {
+        result.transitions.append({t.from + offset, t.symbol, t.to + offset});
+    }
+
+    result.acceptState = n2.acceptState + offset;
+    return result;
+}
+
+// Union operation: nfa1 | nfa2
+NFA buildUnionNFA(const NFA& n1, const NFA& n2)
+{
+    NFA result;
+    int nextId = 0;
+
+    result.states.append({nextId++, false});
+    result.states.append({nextId++, true});
+    int newStart = result.states[0].id;
+    int newAccept = result.states[1].id;
+
+    QMap<int, int> idMap;
+    auto addStates = [&](const QList<NFAState>& states) {
+        for (const auto& s : states) {
+            idMap[s.id] = nextId++;
+            result.states.append({idMap[s.id], s.isAccept});
+        }
+    };
+
+    addStates(n1.states);
+    addStates(n2.states);
+
+    result.transitions.append({newStart, "ε", idMap[n1.startState]});
+    result.transitions.append({newStart, "ε", idMap[n2.startState]});
+
+    for (const auto& s : n1.states) {
+        if (s.isAccept) {
+            result.transitions.append({idMap[s.id], "ε", newAccept});
+        }
+    }
+    for (const auto& s : n2.states) {
+        if (s.isAccept) {
+            result.transitions.append({idMap[s.id], "ε", newAccept});
+        }
+    }
+
+    for (const auto& t : n1.transitions) {
+        result.transitions.append({idMap[t.from], t.symbol, idMap[t.to]});
+    }
+    for (const auto& t : n2.transitions) {
+        result.transitions.append({idMap[t.from], t.symbol, idMap[t.to]});
+    }
+
+    result.startState = newStart;
+    result.acceptState = newAccept;
+    return result;
+}
+
+// ==========================
+//   Token-Specific NFA Builder
+// ==========================
+
+// Identifier NFA: Matches [a-zA-Z_][a-zA-Z0-9_]*
+NFA buildIdentifierNFA()
+{
+    NFA first = buildSymbolNFA('a');  // First character: [a-zA-Z_]
+    NFA loop = buildClosureNFA(first); // Loop for subsequent characters: [a-zA-Z0-9_]
+    return loop;
+}
+
+// Number NFA: Matches digits and optional decimal point (e.g., 123, 123.45)
+NFA buildNumberNFA()
+{
+    NFA digit = buildSymbolNFA('0'); // First digit [0-9]
+    NFA dot = buildSymbolNFA('.');   // Decimal point
+    NFA decimal = buildConcatNFA(dot, digit); // Handle decimals like 12.34
+    return buildUnionNFA(digit, decimal);    // Handle integer or decimal numbers
+}
+
+// String Literal NFA: Matches specific string literals (e.g., "Hello")
+NFA buildStringLiteralNFA(const QString& str)
+{
+    NFA nfa;
+    int lastState = nfa.getNextId();
+    nfa.states.append({lastState, false});
+    for (int i = 0; i < str.length(); ++i) {
+        int currentState = nfa.getNextId();
+        nfa.states.append({currentState, false});
+        nfa.transitions.append({lastState, QString(str[i]), currentState});
+        lastState = currentState;
+    }
+    int acceptState = nfa.getNextId();
+    nfa.states.append({acceptState, true});
+    nfa.transitions.append({lastState, "ε", acceptState});
+    nfa.startState = nfa.states[0].id;
+    nfa.acceptState = acceptState;
+    return nfa;
+}
 
 // ==========================
 //   DrawHelper IMPLEMENTATION
@@ -26,7 +209,7 @@ QGraphicsEllipseItem* DrawHelper::createState(QGraphicsScene* scene, qreal x, qr
 QGraphicsEllipseItem* DrawHelper::createFinalState(QGraphicsScene* scene, qreal x, qreal y, qreal size)
 {
     auto* outer = scene->addEllipse(x, y, size, size, QPen(Qt::black));
-    scene->addEllipse(x + 10, y + 10, size - 20, size - 20, QPen(Qt::black));
+    scene->addEllipse(x + 1, y + 1, size - 2, size - 2, QPen(Qt::black));
     return outer;
 }
 
@@ -55,79 +238,7 @@ QList<QGraphicsItem*> DrawHelper::createArrow(QGraphicsScene* scene,
     items.append(arrow);
 
     auto* text = scene->addText(label);
-    text->setPos((p1.x()+p2.x())/2 - 10, (p1.y()+p2.y())/2 - 20);
-    items.append(text);
-
-    return items;
-}
-
-QList<QGraphicsItem*> DrawHelper::createCurvedArrow(QGraphicsScene* scene,
-    QGraphicsEllipseItem* from,
-    QGraphicsEllipseItem* to,
-    const QString& label,
-    qreal curveOffset,
-    qreal labelOffsetY)
-{
-    QList<QGraphicsItem*> items;
-
-    QPointF p1 = from->sceneBoundingRect().center();
-    QPointF p2 = to->sceneBoundingRect().center();
-
-    QPointF mid = (p1 + p2) / 2;
-    QPointF control(mid.x(), mid.y() - curveOffset);
-
-    QPainterPath path(p1);
-    path.quadTo(control, p2);
-
-    auto* pathItem = scene->addPath(path, QPen(Qt::black, 2));
-    items.append(pathItem);
-
-    QLineF tangent(control, p2);
-    double angle = qDegreesToRadians(-tangent.angle());
-
-    qreal arrowSize = 12;
-    QPointF arrowP1 = p2 + QPointF(cos(angle + 0.5) * -arrowSize, sin(angle + 0.5) * -arrowSize);
-    QPointF arrowP2 = p2 + QPointF(cos(angle - 0.5) * -arrowSize, sin(angle - 0.5) * -arrowSize);
-
-    auto* arrow = scene->addPolygon(QPolygonF({p2, arrowP1, arrowP2}),
-                      QPen(Qt::black), QBrush(Qt::black));
-    items.append(arrow);
-
-    auto* text = scene->addText(label);
-    text->setPos(control.x() - 10, control.y() - 20);
-    items.append(text);
-
-    return items;
-}
-
-QList<QGraphicsItem*> DrawHelper::createSelfLoop(QGraphicsScene* scene,
-    QGraphicsEllipseItem* state,
-    const QString& label)
-{
-    QList<QGraphicsItem*> items;
-
-    QRectF r = state->sceneBoundingRect();
-    QPointF topCenter(r.center().x(), r.top());
-
-    QPointF c1(topCenter.x() - 40, topCenter.y() - 60);
-    QPointF c2(topCenter.x() + 40, topCenter.y() - 60);
-
-    QPainterPath path(topCenter);
-    path.cubicTo(c1, c2, topCenter);
-
-    auto* pathItem = scene->addPath(path, QPen(Qt::black, 2));
-    items.append(pathItem);
-
-    QPointF end = topCenter;
-    QPointF left(end.x() - 10, end.y() - 5);
-    QPointF right(end.x() + 10, end.y() - 5);
-
-    auto* arrow = scene->addPolygon(QPolygonF({end, left, right}),
-                      QPen(Qt::black), QBrush(Qt::black));
-    items.append(arrow);
-
-    auto* text = scene->addText(label);
-    text->setPos(topCenter.x() - 10, topCenter.y() - 80);
+    text->setPos((p1.x() + p2.x()) / 2 - 10, (p1.y() + p2.y()) / 2 - 20);
     items.append(text);
 
     return items;
@@ -137,109 +248,90 @@ QList<QGraphicsItem*> DrawHelper::createSelfLoop(QGraphicsScene* scene,
 //   DiagramBuilder IMPLEMENTATION
 // ===============================
 
-DiagramElements DiagramBuilder::buildExampleDiagram(QGraphicsScene* scene)
+DiagramElements DiagramBuilder::buildDynamicDiagram(QGraphicsScene* scene, const QString& tokenType)
 {
     DiagramElements elements;
+    NFA nfa;
 
-    auto s0 = DrawHelper::createState(scene, -400, 1000);
-    elements.states["s0"] = s0;
+    // Dynamically create the NFA based on tokenType
+    if (tokenType == "Identifier") {
+        nfa = buildIdentifierNFA();
+    } else if (tokenType == "Number") {
+        nfa = buildNumberNFA();
+    } else if (tokenType == "String") {
+        nfa = buildStringLiteralNFA("Print"); // Example string literal
+    } else {
+        nfa = buildSymbolNFA('a'); // Default fallback symbol
+    }
 
-    auto f1 = DrawHelper::createFinalState(scene, -250, 850);
-    elements.states["f1"] = f1;
-    auto s1 = DrawHelper::createState(scene, -150, 850);
-    elements.states["s1"] = s1;
-    auto f2 = DrawHelper::createFinalState(scene, 10, 850);
-    elements.states["f2"] = f2;
+    if (nfa.states.isEmpty()) {
+        return elements;
+    }
 
-    auto f3 = DrawHelper::createFinalState(scene, -250, 970);
-    elements.states["f3"] = f3;
+    // Dynamic layout: use a grid for better spacing
+    int startX = 100;
+    int startY = 100;
+    int stepX = 120; // Horizontal step between states
+    int stepY = 150; // Vertical step between states
 
-    auto s2 = DrawHelper::createState(scene, -150, 1025);
-    elements.states["s2"] = s2;
-    auto s3 = DrawHelper::createState(scene, 10, 1000);
-    elements.states["s3"] = s3;
+    QMap<int, QPointF> statePositions;
+    int rows = 3;  // Adjust number of rows based on the number of states
+    int columns = (nfa.states.size() + rows - 1) / rows; // Calculate columns based on number of states
 
-    auto s4 = DrawHelper::createState(scene, -250, 1100);
-    elements.states["s4"] = s4;
-    auto s5 = DrawHelper::createState(scene, -150, 1100);
-    elements.states["s5"] = s5;
+    for (int i = 0; i < nfa.states.size(); ++i) {
+        int row = i / columns;
+        int col = i % columns;
 
-    auto s6 = DrawHelper::createState(scene, 10, 1150);
-    elements.states["s6"] = s6;
-    auto s7 = DrawHelper::createState(scene, 100, 1150);
-    elements.states["s7"] = s7;
+        statePositions[nfa.states[i].id] = QPointF(startX + col * stepX, startY + row * stepY);
+    }
 
-    auto s8 = DrawHelper::createState(scene, -350, 1200);
-    elements.states["s8"] = s8;
-    auto s9 = DrawHelper::createState(scene, -250, 1200);
-    elements.states["s9"] = s9;
-    auto s10 = DrawHelper::createState(scene, -150, 1200);
-    elements.states["s10"] = s10;
+    // Draw states and transitions
+    for (const auto& state : nfa.states) {
+        QPointF pos = statePositions[state.id];
+        QBrush brush = Qt::white;
 
-    auto s12 = DrawHelper::createState(scene, -350, 1250);
-    elements.states["s12"] = s12;
-    auto s13 = DrawHelper::createState(scene, -250, 1250);
-    elements.states["s13"] = s13;
-    auto s14 = DrawHelper::createState(scene, -150, 1250);
-    elements.states["s14"] = s14;
-    auto s15 = DrawHelper::createState(scene, 10, 1250);
-    elements.states["s15"] = s15;
-    auto s16 = DrawHelper::createState(scene, 100, 1250);
-    elements.states["s16"] = s16;
+        if (state.isAccept) {
+            scene->addEllipse(pos.x() - 35, pos.y() - 35, 70, 70, QPen(QColor("#28a745"), 1), Qt::NoBrush);
+            brush = QColor("#28a745");
+        }
+        if (state.id == nfa.startState) {
+            brush = Qt::lightGray;
+        }
 
-    // NEW: State for 'else' keyword
-    auto s17 = DrawHelper::createState(scene, -70, 1150);
-    elements.states["s17"] = s17;
+        auto* circle = scene->addEllipse(pos.x() - 30, pos.y() - 30, 60, 60, QPen(Qt::black, 2), brush);
+        auto* text = scene->addText(QString::number(state.id));
+        text->setFont(QFont("Arial", 12, QFont::Bold));
+        text->setPos(pos.x() - text->boundingRect().width() / 2,
+                     pos.y() - text->boundingRect().height() / 2);
+        elements.states[QString::number(state.id)] = circle;
+    }
 
-    auto f4 = DrawHelper::createFinalState(scene, 300, 900);
-    elements.states["f4"] = f4;
+    // Draw transitions (arrows)
+    for (const auto& trans : nfa.transitions) {
+        if (!statePositions.contains(trans.from) || !statePositions.contains(trans.to)) continue;
 
-    // Transitions
-    elements.transitions["number"] = DrawHelper::createArrow(scene, s0, f1, "0-9");
-    elements.transitions["number_loop"] = DrawHelper::createSelfLoop(scene, f1, "0-9");
-    elements.transitions["number_dot"] = DrawHelper::createArrow(scene, f1, s1, ".");
-    elements.transitions["number_decimal"] = DrawHelper::createArrow(scene, s1, f2, "0-9");
-    elements.transitions["number_decimal_loop"] = DrawHelper::createSelfLoop(scene, f2, "0-9");
+        QPointF from = statePositions[trans.from];
+        QPointF to = statePositions[trans.to];
 
-    elements.transitions["identifier"] = DrawHelper::createArrow(scene, s0, f3, "a-z, A-Z, _");
-    elements.transitions["identifier_loop"] = DrawHelper::createSelfLoop(scene, f3, "a-z, A-Z, 0-9, _");
+        QLineF line(from, to);
+        double angle = qDegreesToRadians(line.angle());
+        QPointF p1 = to - QPointF(10 * cos(angle) - 5 * sin(angle), 10 * sin(angle) + 5 * cos(angle));
+        QPointF p2 = to - QPointF(10 * cos(angle) + 5 * sin(angle), 10 * sin(angle) - 5 * cos(angle));
 
-    elements.transitions["def_d"] = DrawHelper::createArrow(scene, s0, s2, "d");
-    elements.transitions["def_e"] = DrawHelper::createArrow(scene, s2, s3, "e");
-    elements.transitions["shared_f"] = DrawHelper::createArrow(scene, s3, f4, "f");
+        scene->addLine(from.x(), from.y(), to.x(), to.y(), QPen(Qt::black, 2));
+        scene->addLine(to.x(), to.y(), p1.x(), p1.y(), QPen(Qt::black, 2));
+        scene->addLine(to.x(), to.y(), p2.x(), p2.y(), QPen(Qt::black, 2));
 
-    elements.transitions["shared_el_e"] = DrawHelper::createArrow(scene, s0, s4, "e");
-    elements.transitions["shared_el_l"] = DrawHelper::createArrow(scene, s4, s5, "l");
-
-    elements.transitions["elif_i"] = DrawHelper::createArrow(scene, s5, s3, "i");
-    elements.transitions["else_s"] = DrawHelper::createArrow(scene, s5, s17, "s");
-    elements.transitions["shared_final_e"] = DrawHelper::createArrow(scene, s17, f4, "e");
-
-    elements.transitions["if_i"] = DrawHelper::createArrow(scene, s0, s3, "i");
-
-    elements.transitions["for_f"] = DrawHelper::createArrow(scene, s0, s6, "f");
-    elements.transitions["for_o"] = DrawHelper::createArrow(scene, s6, s7, "o");
-    elements.transitions["for_r"] = DrawHelper::createArrow(scene, s7, f4, "r");
-
-    elements.transitions["while_w"] = DrawHelper::createArrow(scene, s0, s8, "w");
-    elements.transitions["while_h"] = DrawHelper::createArrow(scene, s8, s9, "h");
-    elements.transitions["while_i"] = DrawHelper::createArrow(scene, s9, s10, "i");
-    elements.transitions["while_l"] = DrawHelper::createArrow(scene, s10, s17, "l");
-
-    elements.transitions["return_r"] = DrawHelper::createArrow(scene, s0, s12, "r");
-    elements.transitions["return_e"] = DrawHelper::createArrow(scene, s12, s13, "e");
-    elements.transitions["return_t"] = DrawHelper::createArrow(scene, s13, s14, "t");
-    elements.transitions["return_u"] = DrawHelper::createArrow(scene, s14, s15, "u");
-    elements.transitions["return_r2"] = DrawHelper::createArrow(scene, s15, s16, "r");
-    elements.transitions["return_n"] = DrawHelper::createArrow(scene, s16, f4, "n");
-
-    elements.transitions["operator"] = DrawHelper::createCurvedArrow(scene, s0, f4,
-        "+, -, *, /, %, **, //=, +=, -=, *=, /===, !=, <=, >=, <, >, =");
-    elements.transitions["delimiters"] = DrawHelper::createArrow(scene, s0, f4, "{,},(,),[,],:,\",\'");
+        QPointF labelPos = from * 0.7 + to * 0.3;
+        auto* label = scene->addText(trans.symbol);
+        label->setFont(QFont("Arial", 10));
+        label->setDefaultTextColor(Qt::darkBlue);
+        label->setPos(labelPos.x() - label->boundingRect().width() / 2,
+                      labelPos.y() - label->boundingRect().height() / 2 - 10);
+    }
 
     return elements;
 }
-
 // ==========================================================
 //         LexicalAnalysisTab IMPLEMENTATION
 // ==========================================================
