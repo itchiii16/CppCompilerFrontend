@@ -1,5 +1,6 @@
-# C++ Compiler Frontend Simulator - A Lexical & Syntax Analysis (An Interactive Educational Tool for Compiler Design) 
-
+# C++ Compiler Frontend Simulator - A Lexical & Syntax Analysis 
+> **An Interactive Educational Tool for Compiler Design**
+---
 ## Overview 
 This **C++ Compiler Frontend Simulator - Lexical & Syntax Analyzer** is an interactive educational tool designed to demonstrate the formal language hierarchy in compiler design. It bridges the gap between abstract theory and practical application by visualizing how Python source code is transformed into structured tokens and validated for syntax in real-time.
 
