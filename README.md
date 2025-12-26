@@ -82,7 +82,7 @@ Ensure your development environment meets the following requirements:
 
 ## Future Scope
 * **Dynamic Automata Generation:** Future updates aim to transition from static visualization to a **dynamic graph rendering engine**. This will allow the system to generate unique DFA/PDA diagrams on the fly based on custom user-defined Regular Expressions or Grammars.
-* [cite_start]**Backend Implementation:** Planned expansion includes **Semantic Analysis**, **Intermediate Code Generation**, and **Optimization** to complete the compiler pipeline.
+* **Backend Implementation:** Planned expansion includes **Semantic Analysis**, **Intermediate Code Generation**, and **Optimization** to complete the compiler pipeline.
 
 ## Authors
 * **Adanza, Aaron** 
